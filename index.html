@@ -1,0 +1,258 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AIR CANVAS AI</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:linear-gradient(145deg,#28104e,#10264c,#40134e);
+ color:white;font-family:Arial,sans-serif;
+}
+header{
+ text-align:center;padding:18px 5px;
+ font-size:25px;font-weight:900;
+ color:#ff71d1;letter-spacing:2px;
+}
+header span{color:#49eaff}
+.panel{
+ margin:12px;padding:13px;
+ background:#ffffff14;border:1px solid #ffffff35;
+ border-radius:20px;
+}
+video{
+ width:100%;height:190px;object-fit:cover;
+ transform:scaleX(-1);border-radius:13px;
+ background:#111;
+}
+canvas{
+ width:100%;height:350px;
+ display:block;background:#10162e;
+ border-radius:14px;touch-action:none;
+}
+button{
+ border:0;border-radius:12px;padding:12px;
+ margin:4px;color:white;font-weight:bold;
+ background:linear-gradient(110deg,#ff39aa,#784dff);
+}
+.controls{
+ display:flex;flex-wrap:wrap;
+ justify-content:center;align-items:center;
+}
+#status{text-align:center;color:#58edff;padding:10px}
+.palette{
+ display:flex;justify-content:center;
+ flex-wrap:wrap;gap:12px;padding:12px;
+}
+.dot{
+ width:30px;height:30px;border-radius:50%;
+ border:2px solid white;
+}
+</style>
+</head>
+<body>
+<header>AIR <span>CANVAS</span> AI 🎨</header>
+
+<div class="panel">
+<h3>📸 HAND TRACKING CAMERA</h3>
+<video id="video" autoplay playsinline muted></video>
+<div id="status">Camera not started</div>
+<div class="controls">
+<button id="start">START CAMERA</button>
+<button id="stop">STOP CAMERA</button>
+</div>
+</div>
+
+<div class="panel">
+<h3>✨ DIGITAL DRAWING CANVAS</h3>
+<canvas id="canvas"></canvas>
+<div class="palette">
+<div class="dot" style="background:#ff39aa" data-c="#ff39aa"></div>
+<div class="dot" style="background:#35eaff" data-c="#35eaff"></div>
+<div class="dot" style="background:#a4ff48" data-c="#a4ff48"></div>
+<div class="dot" style="background:#ffe34b" data-c="#ffe34b"></div>
+<div class="dot" style="background:#bd76ff" data-c="#bd76ff"></div>
+<div class="dot" style="background:#ffffff" data-c="#ffffff"></div>
+</div>
+<div class="controls">
+<button id="undo">↶ UNDO</button>
+<button id="clear">CLEAR</button>
+<button id="save">SAVE ART</button>
+</div>
+<div class="controls">
+<label>Brush size </label>
+<input id="brush" type="range" min="2" max="35" value="8">
+</div>
+</div>
+
+<script type="module">
+import {
+ FilesetResolver,HandLandmarker
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+
+const video=document.getElementById("video");
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const status=document.getElementById("status");
+
+let tracker=null,stream=null,running=false;
+let previous=null,history=[],color="#ff39aa";
+let brush=8,palmLocked=false,lastTime=-1;
+
+function resize(){
+ const r=canvas.getBoundingClientRect();
+ const d=window.devicePixelRatio||1;
+ canvas.width=r.width*d;
+ canvas.height=r.height*d;
+ ctx.setTransform(d,0,0,d,0,0);
+ ctx.lineCap="round";
+ ctx.lineJoin="round";
+}
+resize();
+window.addEventListener("resize",resize);
+
+function snapshot(){
+ history.push(ctx.getImageData(0,0,canvas.width,canvas.height));
+ if(history.length>15)history.shift();
+}
+function clear(){
+ snapshot();
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ previous=null;
+}
+document.getElementById("clear").onclick=clear;
+
+document.getElementById("undo").onclick=()=>{
+ if(history.length){
+ ctx.putImageData(history.pop(),0,0);
+ previous=null;
+ }
+};
+
+document.getElementById("brush").oninput=e=>{
+ brush=Number(e.target.value);
+};
+
+document.querySelectorAll(".dot").forEach(d=>{
+ d.onclick=()=>color=d.dataset.c;
+});
+
+document.getElementById("save").onclick=()=>{
+ const a=document.createElement("a");
+ a.download="AIR-CANVAS-ART.png";
+ a.href=canvas.toDataURL("image/png");
+ a.click();
+};
+
+async function setup(){
+ const vision=await FilesetResolver.forVisionTasks(
+ "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+ );
+ tracker=await HandLandmarker.createFromOptions(vision,{
+ baseOptions:{
+ modelAssetPath:
+ "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+ delegate:"CPU"
+ },
+ runningMode:"VIDEO",numHands:1
+ });
+}
+
+function up(lm,t,p){return lm[t].y<lm[p].y}
+
+function gesture(lm){
+ const i=up(lm,8,6),m=up(lm,12,10);
+ const r=up(lm,16,14),p=up(lm,20,18);
+ const pinch=Math.hypot(lm[4].x-lm[8].x,lm[4].y-lm[8].y);
+ if(pinch<0.055)return "PINCH";
+ if(i&&!m&&!r&&!p)return "DRAW";
+ if(i&&m&&r&&p)return "PALM";
+ if(!i&&!m&&!r&&!p)return "PAUSE";
+ return "PAUSE";
+}
+
+function draw(x,y){
+ const px=(1-x)*canvas.clientWidth;
+ const py=y*canvas.clientHeight;
+ if(!previous){
+ snapshot();
+ previous={x:px,y:py};
+ return;
+ }
+ ctx.strokeStyle=color;
+ ctx.lineWidth=brush;
+ ctx.beginPath();
+ ctx.moveTo(previous.x,previous.y);
+ ctx.lineTo(px,py);
+ ctx.stroke();
+ previous={x:px,y:py};
+}
+
+async function start(){
+ try{
+ status.textContent="Loading AI...";
+ if(!tracker)await setup();
+ stream=await navigator.mediaDevices.getUserMedia({
+ audio:false,video:{
+ facingMode:"user",
+ width:{ideal:1280},height:{ideal:720}
+ }
+ });
+ video.srcObject=stream;
+ await video.play();
+ running=true;
+ status.textContent="AI READY — SHOW YOUR HAND";
+ requestAnimationFrame(loop);
+ }catch(e){
+ status.textContent="ERROR: "+e.message;
+ }
+}
+
+function loop(){
+ if(!running)return;
+ if(video.readyState>=2&&video.currentTime!==lastTime){
+ lastTime=video.currentTime;
+ const result=tracker.detectForVideo(video,performance.now());
+ if(result.landmarks?.length){
+ const lm=result.landmarks[0];
+ const g=gesture(lm);
+ if(g==="DRAW"){
+ draw(lm[8].x,lm[8].y);
+ palmLocked=false;
+ status.textContent="☝ DRAWING";
+ }else if(g==="PALM"){
+ previous=null;
+ if(!palmLocked){clear();palmLocked=true}
+ status.textContent="✋ CANVAS CLEARED";
+ }else if(g==="PINCH"){
+ previous=null;
+ brush=Math.max(2,Math.min(35,
+ Math.round(Math.hypot(lm[4].x-lm[8].x,lm[4].y-lm[8].y)*250)));
+ document.getElementById("brush").value=brush;
+ palmLocked=false;
+ status.textContent="🤏 BRUSH SIZE: "+brush;
+ }else{
+ previous=null;palmLocked=false;
+ status.textContent="✊ PAUSED";
+ }
+ }else{
+ previous=null;palmLocked=false;
+ status.textContent="SHOW YOUR HAND";
+ }
+ }
+ requestAnimationFrame(loop);
+}
+
+document.getElementById("start").onclick=start;
+document.getElementById("stop").onclick=()=>{
+ running=false;
+ if(stream)stream.getTracks().forEach(t=>t.stop());
+ stream=null;video.srcObject=null;previous=null;
+ status.textContent="CAMERA STOPPED";
+};
+</script>
+</body>
+  </html>
+  
