@@ -1,0 +1,7 @@
+
+{
+  "appId": "com.aircanvas.ai",
+  "appName": "AIR CANVAS AI",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
